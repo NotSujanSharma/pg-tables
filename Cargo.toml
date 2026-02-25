@@ -8,3 +8,4 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
 tokio = { version = "1", features = ["full"] }
 eframe = "0.33"
 rfd = "0.15"
+dirs = "6"
