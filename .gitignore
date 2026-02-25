@@ -1,1 +1,8 @@
 /target
+.env
+*.db
+*.sql
+*.csv
+*.json
+*.log
+*.xlsx
