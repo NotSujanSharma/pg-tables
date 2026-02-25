@@ -1,11 +1,11 @@
 //! Views tab — select views and show dependencies.
 
-use crate::components::{
+use crate::ui::components::{
     checkbox_list, filter_upload_row, loading_ui, output_actions, output_panel, search_bar,
     section_header, selection_toolbar,
 };
+use crate::config::style;
 use crate::db;
-use crate::style;
 use eframe::egui;
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -17,14 +17,14 @@ pub struct ViewsState {
     pub search: String,
     pub selected: HashSet<String>,
     pub output: String,
-    pub loading: bool,        // loading deps
-    pub loading_views: bool,  // loading view list
+    pub loading: bool,       // loading deps
+    pub loading_views: bool, // loading view list
 
     /// Optional name-list uploaded from file — filters the view list.
     pub filter_list: Option<Vec<String>>,
 
     pending_views: Option<Arc<Mutex<Option<Vec<(String, String)>>>>>,
-    pending_deps:  Option<Arc<Mutex<Option<String>>>>,
+    pending_deps: Option<Arc<Mutex<Option<String>>>>,
 }
 
 impl Default for ViewsState {
@@ -107,7 +107,10 @@ impl ViewsState {
                                 "  No dependencies (view may reference only literals or functions).\n",
                             );
                         } else {
-                            output.push_str(&format!("  {:<5} {:<22} {}\n", "#", "Kind", "Object"));
+                            output.push_str(&format!(
+                                "  {:<5} {:<22} {}\n",
+                                "#", "Kind", "Object"
+                            ));
                             output.push_str(&format!("  {}\n", "─".repeat(55)));
                             for (i, dep) in deps.iter().enumerate() {
                                 let qualified = if dep.schema == schema {
@@ -144,7 +147,9 @@ impl ViewsState {
         if self.loading_views {
             ctx.request_repaint();
             let done = {
-                let r = self.pending_views.as_ref()
+                let r = self
+                    .pending_views
+                    .as_ref()
                     .and_then(|p| p.try_lock().ok())
                     .and_then(|mut g| g.take());
                 r
@@ -158,7 +163,9 @@ impl ViewsState {
         if self.loading {
             ctx.request_repaint();
             let done = {
-                let r = self.pending_deps.as_ref()
+                let r = self
+                    .pending_deps
+                    .as_ref()
                     .and_then(|p| p.try_lock().ok())
                     .and_then(|mut g| g.take());
                 r
@@ -189,8 +196,6 @@ impl ViewsState {
                 ui.set_width(left_width);
                 ui.set_min_height(available.y);
 
-                // Snapshot the filter list so we can later mutably borrow
-                // self.filter_list for the upload row.
                 let filter_snap: Option<HashSet<String>> = self
                     .filter_list
                     .as_ref()
@@ -255,8 +260,14 @@ impl ViewsState {
                         .map(|(n, k)| (n.clone(), k.clone()))
                         .collect();
                     let filter_slice = self.filter_list.as_deref();
-                    let toggles =
-                        checkbox_list(ui, "view_select", &items, &self.selected, &self.search, filter_slice);
+                    let toggles = checkbox_list(
+                        ui,
+                        "view_select",
+                        &items,
+                        &self.selected,
+                        &self.search,
+                        filter_slice,
+                    );
                     for (name, checked) in toggles {
                         if checked {
                             self.selected.insert(name);
@@ -305,4 +316,3 @@ impl ViewsState {
         });
     }
 }
-

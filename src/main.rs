@@ -1,11 +1,9 @@
 mod app;
-mod components;
+mod config;
 mod db;
 mod faker;
-mod schema_format;
-mod session;
-mod style;
-mod tabs;
+mod schema;
+mod ui;
 
 use eframe::egui;
 

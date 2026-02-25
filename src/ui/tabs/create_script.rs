@@ -1,12 +1,12 @@
 //! Schema Generator tab — select tables, pick a target format, generate DDL.
 
-use crate::components::{
-    checkbox_list, filter_upload_row, loading_ui, output_panel, search_bar,
-    section_header, selection_toolbar,
+use crate::ui::components::{
+    checkbox_list, filter_upload_row, loading_ui, output_panel, search_bar, section_header,
+    selection_toolbar,
 };
+use crate::config::style;
 use crate::db;
-use crate::schema_format::{self, SchemaFormat};
-use crate::style;
+use crate::schema::{self, SchemaFormat};
 use eframe::egui;
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -59,7 +59,7 @@ impl CreateScriptState {
         &mut self,
         rt: &tokio::runtime::Runtime,
         pool: &PgPool,
-        schema: &str,
+        schema_name: &str,
     ) {
         let result: Pending<String> = Arc::new(Mutex::new(None));
         self.pending = Some(result.clone());
@@ -67,7 +67,7 @@ impl CreateScriptState {
         self.output.clear();
 
         let pool = pool.clone();
-        let schema = schema.to_string();
+        let schema_name = schema_name.to_string();
         let fmt = self.format;
         let mut selected: Vec<String> = self.selected.iter().cloned().collect();
         selected.sort();
@@ -76,14 +76,14 @@ impl CreateScriptState {
             let mut metas: Vec<db::TableMeta> = Vec::new();
             let mut errors = String::new();
             for table in &selected {
-                match db::fetch_table_meta(&pool, &schema, table).await {
+                match db::fetch_table_meta(&pool, &schema_name, table).await {
                     Ok(m) => metas.push(m),
                     Err(e) => {
                         errors.push_str(&format!("-- Error for {table}: {e}\n"));
                     }
                 }
             }
-            let mut output = schema_format::format_tables(&metas, fmt);
+            let mut output = schema::format_tables(&metas, fmt);
             if !errors.is_empty() {
                 output.push_str("\n\n");
                 output.push_str(&errors);
@@ -116,7 +116,7 @@ impl CreateScriptState {
         tables: &[String],
         rt: &tokio::runtime::Runtime,
         pool: &PgPool,
-        schema: &str,
+        schema_name: &str,
     ) {
         self.poll(ui.ctx());
 
@@ -236,7 +236,7 @@ impl CreateScriptState {
                         )
                         .clicked()
                     {
-                        self.start_generate(rt, pool, schema);
+                        self.start_generate(rt, pool, schema_name);
                     }
                 });
 
@@ -244,13 +244,25 @@ impl CreateScriptState {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     let desc = match self.format {
-                        SchemaFormat::Postgres   => "Native PostgreSQL DDL with all constraints",
-                        SchemaFormat::Oracle     => "Oracle-compatible types (NUMBER, CLOB, RAW…)",
-                        SchemaFormat::MySQL      => "MySQL/MariaDB syntax (backtick quoting)",
-                        SchemaFormat::SQLServer  => "T-SQL types (NVARCHAR, UNIQUEIDENTIFIER…)",
-                        SchemaFormat::Databricks => "Delta Lake CREATE TABLE (no FK/CHECK)",
-                        SchemaFormat::SQLite     => "SQLite affinity types (INTEGER, REAL, TEXT…)",
-                        SchemaFormat::Snowflake  => "Snowflake types (VARIANT, TIMESTAMP_TZ…)",
+                        SchemaFormat::Postgres => {
+                            "Native PostgreSQL DDL with all constraints"
+                        }
+                        SchemaFormat::Oracle => {
+                            "Oracle-compatible types (NUMBER, CLOB, RAW…)"
+                        }
+                        SchemaFormat::MySQL => "MySQL/MariaDB syntax (backtick quoting)",
+                        SchemaFormat::SQLServer => {
+                            "T-SQL types (NVARCHAR, UNIQUEIDENTIFIER…)"
+                        }
+                        SchemaFormat::Databricks => {
+                            "Delta Lake CREATE TABLE (no FK/CHECK)"
+                        }
+                        SchemaFormat::SQLite => {
+                            "SQLite affinity types (INTEGER, REAL, TEXT…)"
+                        }
+                        SchemaFormat::Snowflake => {
+                            "Snowflake types (VARIANT, TIMESTAMP_TZ…)"
+                        }
                     };
                     ui.colored_label(style::COLOR_MUTED, desc);
                 });
@@ -290,7 +302,11 @@ impl CreateScriptState {
                         ui.separator();
                         ui.colored_label(
                             style::COLOR_ACCENT,
-                            format!("{} tables  ·  {}", self.selected.len(), self.format.label()),
+                            format!(
+                                "{} tables  ·  {}",
+                                self.selected.len(),
+                                self.format.label()
+                            ),
                         );
                     });
                     ui.add_space(2.0);
@@ -312,4 +328,3 @@ impl CreateScriptState {
         });
     }
 }
-

@@ -1,8 +1,8 @@
 //! SQL Query tab — execute arbitrary SQL and view results.
 
-use crate::components::section_header;
+use crate::ui::components::section_header;
+use crate::config::style;
 use crate::db;
-use crate::style;
 use eframe::egui;
 use sqlx::PgPool;
 
@@ -80,7 +80,11 @@ impl QueryState {
             ui.add_space(2.0);
 
             ui.horizontal(|ui| {
-                let btn_text = if self.executing { "⏳ Running..." } else { "▶ Execute" };
+                let btn_text = if self.executing {
+                    "⏳ Running..."
+                } else {
+                    "▶ Execute"
+                };
                 if ui
                     .add_enabled(
                         !self.sql.trim().is_empty() && !self.executing,
@@ -144,7 +148,9 @@ impl QueryState {
                             .font(egui::TextStyle::Monospace)
                             .desired_width(f32::INFINITY)
                             .desired_rows(6)
-                            .hint_text("Enter SQL query here... (e.g. SELECT * FROM users LIMIT 10)"),
+                            .hint_text(
+                                "Enter SQL query here... (e.g. SELECT * FROM users LIMIT 10)",
+                            ),
                     );
                 });
 
@@ -161,7 +167,11 @@ impl QueryState {
                         ui.strong("Results");
                         ui.colored_label(
                             style::COLOR_MUTED,
-                            format!("{} row(s), {} column(s)", result.rows.len(), result.columns.len()),
+                            format!(
+                                "{} row(s), {} column(s)",
+                                result.rows.len(),
+                                result.columns.len()
+                            ),
                         );
                     });
                     ui.add_space(4.0);
@@ -188,7 +198,10 @@ impl QueryState {
                                         for row in result.rows.iter().take(1000) {
                                             for cell in row {
                                                 if cell == "NULL" {
-                                                    ui.colored_label(style::COLOR_NULL_BADGE, "NULL");
+                                                    ui.colored_label(
+                                                        style::COLOR_NULL_BADGE,
+                                                        "NULL",
+                                                    );
                                                 } else {
                                                     ui.monospace(cell);
                                                 }
@@ -201,7 +214,10 @@ impl QueryState {
                                     ui.add_space(4.0);
                                     ui.colored_label(
                                         style::COLOR_MUTED,
-                                        format!("... showing 1000 of {} rows", result.rows.len()),
+                                        format!(
+                                            "... showing 1000 of {} rows",
+                                            result.rows.len()
+                                        ),
                                     );
                                 }
                             });
@@ -209,12 +225,18 @@ impl QueryState {
                 } else {
                     ui.colored_label(
                         style::COLOR_SUCCESS,
-                        format!("✓ Statement executed. {} row(s) affected.", result.affected),
+                        format!(
+                            "✓ Statement executed. {} row(s) affected.",
+                            result.affected
+                        ),
                     );
                 }
             } else {
                 ui.centered_and_justified(|ui| {
-                    ui.colored_label(style::COLOR_MUTED, "Enter a query and click ▶ Execute.");
+                    ui.colored_label(
+                        style::COLOR_MUTED,
+                        "Enter a query and click ▶ Execute.",
+                    );
                 });
             }
         });

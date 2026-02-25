@@ -1,10 +1,10 @@
 //! Main application state and routing — delegates to tab modules.
 
-use crate::components;
+use crate::config::session::Session;
+use crate::config::style;
 use crate::db;
-use crate::session::Session;
-use crate::style;
-use crate::tabs;
+use crate::ui::components;
+use crate::ui::tabs;
 use eframe::egui;
 use sqlx::PgPool;
 use std::sync::{Arc, Mutex};

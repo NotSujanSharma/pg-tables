@@ -1,12 +1,12 @@
 //! Fake Data tab — select tables, configure row count, generate & export CSV.
 
-use crate::components::{
+use crate::ui::components::{
     checkbox_list, filter_upload_row, loading_ui, output_actions, output_panel, search_bar,
     section_header, selection_toolbar,
 };
+use crate::config::style;
 use crate::db::{self, FakeColumnInfo};
 use crate::faker;
-use crate::style;
 use eframe::egui;
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -19,19 +19,19 @@ use std::sync::{Arc, Mutex};
 type ColCache = Arc<Mutex<std::collections::HashMap<String, Vec<FakeColumnInfo>>>>;
 
 pub struct FakeDataState {
-    // ── Left panel ────────────────────────────────────────────────────────────
+    // ── Left panel ────────────────────────────────────────────────────────
     pub search: String,
     pub selected: HashSet<String>,
     pub filter_list: Option<Vec<String>>,
 
-    // ── Row count ─────────────────────────────────────────────────────────────
+    // ── Row count ─────────────────────────────────────────────────────────
     pub row_count_str: String,
 
-    // ── Output ────────────────────────────────────────────────────────────────
+    // ── Output ────────────────────────────────────────────────────────────
     pub output: String,
     pub generating: bool,
 
-    // ── Internals ─────────────────────────────────────────────────────────────
+    // ── Internals ─────────────────────────────────────────────────────────
     /// Column metadata cache – keyed by table name.
     col_cache: ColCache,
     /// Channel for async generation result.
@@ -64,7 +64,7 @@ impl FakeDataState {
         self.col_cache.lock().unwrap().clear();
     }
 
-    // ── Async generation ──────────────────────────────────────────────────────
+    // ── Async generation ──────────────────────────────────────────────────
 
     /// Kick off async fake-data generation — does not block the UI thread.
     pub fn start_generate(
@@ -73,7 +73,12 @@ impl FakeDataState {
         pool: &PgPool,
         schema: &str,
     ) {
-        let row_count: usize = self.row_count_str.trim().parse().unwrap_or(10).clamp(1, 10_000);
+        let row_count: usize = self
+            .row_count_str
+            .trim()
+            .parse()
+            .unwrap_or(10)
+            .clamp(1, 10_000);
 
         let result: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         self.pending = Some(result.clone());
@@ -147,7 +152,7 @@ impl FakeDataState {
         }
     }
 
-    // ── Draw ──────────────────────────────────────────────────────────────────
+    // ── Draw ──────────────────────────────────────────────────────────────
 
     pub fn draw(
         &mut self,
@@ -259,15 +264,17 @@ impl FakeDataState {
                     );
                     // Keep only digits
                     if field.changed() {
-                        self.row_count_str
-                            .retain(|c| c.is_ascii_digit());
+                        self.row_count_str.retain(|c| c.is_ascii_digit());
                         if self.row_count_str.is_empty() {
                             self.row_count_str = "10".into();
                         }
                     }
                     let rows: usize =
                         self.row_count_str.parse().unwrap_or(10).clamp(1, 10_000);
-                    ui.colored_label(style::COLOR_MUTED, format!("(max 10,000 — will generate {rows})"));
+                    ui.colored_label(
+                        style::COLOR_MUTED,
+                        format!("(max 10,000 — will generate {rows})"),
+                    );
                 });
                 ui.add_space(4.0);
 

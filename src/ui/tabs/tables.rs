@@ -1,8 +1,8 @@
 //! Tables tab — browsable table list with column detail panel.
 
-use crate::components::{loading_ui, search_bar, section_header};
+use crate::ui::components::{loading_ui, search_bar, section_header};
+use crate::config::style;
 use crate::db;
-use crate::style;
 use eframe::egui;
 use sqlx::PgPool;
 use std::sync::{Arc, Mutex};
@@ -98,7 +98,9 @@ impl TablesState {
         if self.loading_tables {
             ctx.request_repaint();
             let done = {
-                let r = self.pending_tables.as_ref()
+                let r = self
+                    .pending_tables
+                    .as_ref()
                     .and_then(|p| p.try_lock().ok())
                     .and_then(|mut g| g.take());
                 r
@@ -112,7 +114,9 @@ impl TablesState {
         if self.loading_columns {
             ctx.request_repaint();
             let done = {
-                let r = self.pending_columns.as_ref()
+                let r = self
+                    .pending_columns
+                    .as_ref()
                     .and_then(|p| p.try_lock().ok())
                     .and_then(|mut g| g.take());
                 r
@@ -179,7 +183,10 @@ impl TablesState {
                             if !any {
                                 ui.add_space(8.0);
                                 ui.centered_and_justified(|ui| {
-                                    ui.colored_label(style::COLOR_MUTED, "No tables match.");
+                                    ui.colored_label(
+                                        style::COLOR_MUTED,
+                                        "No tables match.",
+                                    );
                                 });
                             }
                         });
@@ -225,17 +232,30 @@ impl TablesState {
 
                                     for col in &self.columns {
                                         ui.monospace(&col.name);
-                                        ui.colored_label(style::COLOR_ACCENT, &col.data_type);
+                                        ui.colored_label(
+                                            style::COLOR_ACCENT,
+                                            &col.data_type,
+                                        );
 
                                         if col.is_nullable == "YES" {
-                                            ui.colored_label(style::COLOR_NULL_BADGE, "NULL");
+                                            ui.colored_label(
+                                                style::COLOR_NULL_BADGE,
+                                                "NULL",
+                                            );
                                         } else {
-                                            ui.colored_label(style::COLOR_PK_BADGE, "NOT NULL");
+                                            ui.colored_label(
+                                                style::COLOR_PK_BADGE,
+                                                "NOT NULL",
+                                            );
                                         }
 
                                         match &col.column_default {
-                                            Some(d) => ui.colored_label(style::COLOR_MUTED, d),
-                                            None => ui.colored_label(style::COLOR_MUTED, "—"),
+                                            Some(d) => {
+                                                ui.colored_label(style::COLOR_MUTED, d)
+                                            }
+                                            None => {
+                                                ui.colored_label(style::COLOR_MUTED, "—")
+                                            }
                                         };
                                         ui.end_row();
                                     }
@@ -244,7 +264,10 @@ impl TablesState {
                 } else {
                     section_header(ui, "Columns", 0, "");
                     ui.centered_and_justified(|ui| {
-                        ui.colored_label(style::COLOR_MUTED, "← Select a table to view its columns");
+                        ui.colored_label(
+                            style::COLOR_MUTED,
+                            "← Select a table to view its columns",
+                        );
                     });
                 }
             });
@@ -255,4 +278,3 @@ impl TablesState {
         }
     }
 }
-

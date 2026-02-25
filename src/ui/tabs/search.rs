@@ -1,8 +1,8 @@
 //! Advanced Search tab — find tables, views, and columns by various criteria.
 
-use crate::components::{loading_ui, section_header};
+use crate::ui::components::{loading_ui, section_header};
+use crate::config::style;
 use crate::db;
-use crate::style;
 use eframe::egui;
 use sqlx::PgPool;
 use std::sync::{Arc, Mutex};
@@ -61,18 +61,32 @@ impl SearchMode {
 
     fn description(self) -> &'static str {
         match self {
-            Self::ColumnsGlobal => "Find all columns matching a name pattern across every table and view.",
-            Self::TablesWithColumn => "Find tables or views that contain columns matching a name pattern.",
-            Self::TablesWithoutColumn => "Find tables or views that do NOT contain a column matching a pattern.",
-            Self::ColumnsByType => "Find columns of a specific data type (e.g. jsonb, uuid, timestamp).",
-            Self::ForeignKeyRefs => "Find all foreign keys that reference a specific target table.",
+            Self::ColumnsGlobal => {
+                "Find all columns matching a name pattern across every table and view."
+            }
+            Self::TablesWithColumn => {
+                "Find tables or views that contain columns matching a name pattern."
+            }
+            Self::TablesWithoutColumn => {
+                "Find tables or views that do NOT contain a column matching a pattern."
+            }
+            Self::ColumnsByType => {
+                "Find columns of a specific data type (e.g. jsonb, uuid, timestamp)."
+            }
+            Self::ForeignKeyRefs => {
+                "Find all foreign keys that reference a specific target table."
+            }
             Self::TablesWithoutPK => "List all tables that have no primary key defined.",
             Self::TablesWithoutIndexes => "List all tables with no indexes at all.",
             Self::DuplicateIndexes => "Find indexes that cover the same columns (redundant).",
             Self::UnusedIndexes => "Find indexes with very few scans (wasting space).",
-            Self::NullableNoDefault => "Find nullable columns that have no default — potential data issues.",
+            Self::NullableNoDefault => {
+                "Find nullable columns that have no default — potential data issues."
+            }
             Self::LargestTables => "Show the largest tables ordered by total disk size.",
-            Self::TablesByRowCount => "Find tables with approximate row counts in a given range.",
+            Self::TablesByRowCount => {
+                "Find tables with approximate row counts in a given range."
+            }
         }
     }
 
@@ -200,11 +214,9 @@ impl SearchState {
 
         rt.spawn(async move {
             let r = match mode {
-                SearchMode::ColumnsGlobal => {
-                    db::search_columns_globally(&pool, &schema, &pattern)
-                        .await
-                        .map_err(|e| e.to_string())
-                }
+                SearchMode::ColumnsGlobal => db::search_columns_globally(&pool, &schema, &pattern)
+                    .await
+                    .map_err(|e| e.to_string()),
                 SearchMode::TablesWithColumn => {
                     db::search_relations_with_column(&pool, &schema, &pattern, &rk)
                         .await
@@ -220,11 +232,9 @@ impl SearchState {
                         .await
                         .map_err(|e| e.to_string())
                 }
-                SearchMode::TablesWithoutPK => {
-                    db::search_tables_without_pk(&pool, &schema)
-                        .await
-                        .map_err(|e| e.to_string())
-                }
+                SearchMode::TablesWithoutPK => db::search_tables_without_pk(&pool, &schema)
+                    .await
+                    .map_err(|e| e.to_string()),
                 SearchMode::TablesWithoutIndexes => {
                     db::search_tables_without_indexes(&pool, &schema)
                         .await
@@ -235,26 +245,18 @@ impl SearchState {
                         .await
                         .map_err(|e| e.to_string())
                 }
-                SearchMode::DuplicateIndexes => {
-                    db::search_duplicate_indexes(&pool, &schema)
-                        .await
-                        .map_err(|e| e.to_string())
-                }
-                SearchMode::UnusedIndexes => {
-                    db::search_unused_indexes(&pool, &schema)
-                        .await
-                        .map_err(|e| e.to_string())
-                }
-                SearchMode::NullableNoDefault => {
-                    db::search_nullable_no_default(&pool, &schema)
-                        .await
-                        .map_err(|e| e.to_string())
-                }
-                SearchMode::LargestTables => {
-                    db::search_largest_tables(&pool, &schema)
-                        .await
-                        .map_err(|e| e.to_string())
-                }
+                SearchMode::DuplicateIndexes => db::search_duplicate_indexes(&pool, &schema)
+                    .await
+                    .map_err(|e| e.to_string()),
+                SearchMode::UnusedIndexes => db::search_unused_indexes(&pool, &schema)
+                    .await
+                    .map_err(|e| e.to_string()),
+                SearchMode::NullableNoDefault => db::search_nullable_no_default(&pool, &schema)
+                    .await
+                    .map_err(|e| e.to_string()),
+                SearchMode::LargestTables => db::search_largest_tables(&pool, &schema)
+                    .await
+                    .map_err(|e| e.to_string()),
                 SearchMode::TablesByRowCount => {
                     db::search_tables_by_row_count(&pool, &schema, min_rows, max_rows)
                         .await
@@ -359,13 +361,11 @@ impl SearchState {
             if self.mode.needs_row_range() {
                 ui.colored_label(style::COLOR_MUTED, "Min:");
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.min_rows)
-                        .desired_width(90.0),
+                    egui::TextEdit::singleline(&mut self.min_rows).desired_width(90.0),
                 );
                 ui.colored_label(style::COLOR_MUTED, "Max:");
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.max_rows)
-                        .desired_width(90.0),
+                    egui::TextEdit::singleline(&mut self.max_rows).desired_width(90.0),
                 );
             }
 
@@ -412,7 +412,10 @@ impl SearchState {
                 .inner_margin(egui::Margin::symmetric(12, 8))
                 .corner_radius(6.0)
                 .fill(egui::Color32::from_rgb(60, 24, 24))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(140, 50, 50)))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgb(140, 50, 50),
+                ))
                 .show(ui, |ui| {
                     ui.colored_label(style::COLOR_ERROR, format!("⚠  {err}"));
                 });
@@ -428,16 +431,16 @@ impl SearchState {
                 ui.add(egui::Label::new(
                     egui::RichText::new("Results").strong().size(13.5),
                 ));
-                ui.colored_label(
-                    style::COLOR_ACCENT,
-                    format!("{row_count} rows"),
-                );
+                ui.colored_label(style::COLOR_ACCENT, format!("{row_count} rows"));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Copy results button
                     if !sr.rows.is_empty() {
                         if ui
-                            .add(egui::Button::new("📋 Copy").min_size(egui::vec2(70.0, 24.0)))
+                            .add(
+                                egui::Button::new("📋 Copy")
+                                    .min_size(egui::vec2(70.0, 24.0)),
+                            )
                             .clicked()
                         {
                             ui.ctx().copy_text(copy_text.clone());
@@ -491,11 +494,7 @@ impl SearchState {
         }
     }
 
-    fn draw_result_table(
-        ui: &mut egui::Ui,
-        sr: &db::SearchResult,
-        filter: &str,
-    ) {
+    fn draw_result_table(ui: &mut egui::Ui, sr: &db::SearchResult, filter: &str) {
         egui::ScrollArea::both()
             .id_salt("search_results_scroll")
             .auto_shrink([false, false])
@@ -548,12 +547,17 @@ impl SearchState {
                     let visible = sr
                         .rows
                         .iter()
-                        .filter(|r| r.cells.iter().any(|c| c.to_lowercase().contains(filter)))
+                        .filter(|r| {
+                            r.cells.iter().any(|c| c.to_lowercase().contains(filter))
+                        })
                         .count();
                     if visible == 0 {
                         ui.add_space(8.0);
                         ui.centered_and_justified(|ui| {
-                            ui.colored_label(style::COLOR_MUTED, "No results match filter.");
+                            ui.colored_label(
+                                style::COLOR_MUTED,
+                                "No results match filter.",
+                            );
                         });
                     }
                 }
