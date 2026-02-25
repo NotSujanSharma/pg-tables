@@ -1,27 +1,33 @@
-//! Create Script tab — select tables and generate DDL.
+//! Schema Generator tab — select tables, pick a target format, generate DDL.
 
 use crate::components::{
-    checkbox_list, filter_upload_row, loading_ui, output_actions, output_panel, search_bar,
+    checkbox_list, filter_upload_row, loading_ui, output_panel, search_bar,
     section_header, selection_toolbar,
 };
 use crate::db;
+use crate::schema_format::{self, SchemaFormat};
 use crate::style;
 use eframe::egui;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-/// State for the Create Script tab.
+type Pending<T> = Arc<Mutex<Option<T>>>;
+
+/// State for the Schema Generator tab.
 pub struct CreateScriptState {
+    // left panel — table selection
     pub search: String,
     pub selected: HashSet<String>,
-    pub output: String,
-    pub generating: bool,
-
-    /// Optional name-list uploaded from file — filters the table list.
     pub filter_list: Option<Vec<String>>,
 
-    pending: Option<Arc<Mutex<Option<String>>>>,
+    // format selector
+    format: SchemaFormat,
+
+    // output
+    pub output: String,
+    pub generating: bool,
+    pending: Option<Pending<String>>,
 }
 
 impl Default for CreateScriptState {
@@ -29,9 +35,10 @@ impl Default for CreateScriptState {
         Self {
             search: String::new(),
             selected: HashSet::new(),
+            filter_list: None,
+            format: SchemaFormat::Postgres,
             output: String::new(),
             generating: false,
-            filter_list: None,
             pending: None,
         }
     }
@@ -47,57 +54,59 @@ impl CreateScriptState {
         self.pending = None;
     }
 
-    /// Kick off async DDL generation — does not block the UI thread.
-    pub fn start_generate(
+    /// Kick off async schema generation for all selected tables.
+    fn start_generate(
         &mut self,
         rt: &tokio::runtime::Runtime,
         pool: &PgPool,
         schema: &str,
     ) {
-        let result: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let result: Pending<String> = Arc::new(Mutex::new(None));
         self.pending = Some(result.clone());
         self.generating = true;
         self.output.clear();
 
         let pool = pool.clone();
         let schema = schema.to_string();
+        let fmt = self.format;
         let mut selected: Vec<String> = self.selected.iter().cloned().collect();
         selected.sort();
 
         rt.spawn(async move {
-            let mut output = String::new();
+            let mut metas: Vec<db::TableMeta> = Vec::new();
+            let mut errors = String::new();
             for table in &selected {
-                match db::generate_create_script(&pool, &schema, table).await {
-                    Ok(script) => {
-                        if !output.is_empty() {
-                            output.push_str("\n\n");
-                        }
-                        output.push_str(&script);
-                    }
+                match db::fetch_table_meta(&pool, &schema, table).await {
+                    Ok(m) => metas.push(m),
                     Err(e) => {
-                        output.push_str(&format!("-- Error for {table}: {e}\n"));
+                        errors.push_str(&format!("-- Error for {table}: {e}\n"));
                     }
                 }
+            }
+            let mut output = schema_format::format_tables(&metas, fmt);
+            if !errors.is_empty() {
+                output.push_str("\n\n");
+                output.push_str(&errors);
             }
             *result.lock().unwrap() = Some(output);
         });
     }
 
-    /// Poll the pending async result — call every frame while generating.
+    /// Poll the pending async result.
     fn poll(&mut self, ctx: &egui::Context) {
-        if self.generating {
-            ctx.request_repaint();
-            let done = {
-                let r = self.pending.as_ref()
-                    .and_then(|p| p.try_lock().ok())
-                    .and_then(|mut g| g.take());
-                r
-            };
-            if let Some(output) = done {
-                self.output = output;
-                self.generating = false;
-                self.pending = None;
-            }
+        if !self.generating {
+            return;
+        }
+        ctx.request_repaint();
+        let done = self
+            .pending
+            .as_ref()
+            .and_then(|p| p.try_lock().ok())
+            .and_then(|mut g| g.take());
+        if let Some(output) = done {
+            self.output = output;
+            self.generating = false;
+            self.pending = None;
         }
     }
 
@@ -120,20 +129,17 @@ impl CreateScriptState {
                 ui.set_width(left_width);
                 ui.set_min_height(available.y);
 
-                // Count after filter + search — clone so we can still mutably
-                // borrow self.filter_list later for the upload row.
                 let filter_snap: Option<HashSet<String>> = self
                     .filter_list
                     .as_ref()
                     .map(|l| l.iter().cloned().collect());
-                let filter_set = &filter_snap;
 
                 let visible_count = tables
                     .iter()
                     .filter(|t| {
                         let s = self.search.to_lowercase();
                         let text_ok = s.is_empty() || t.to_lowercase().contains(&s);
-                        let filter_ok = filter_set
+                        let filter_ok = filter_snap
                             .as_ref()
                             .map(|fs| fs.contains(t.as_str()))
                             .unwrap_or(true);
@@ -146,10 +152,8 @@ impl CreateScriptState {
                 search_bar(ui, &mut self.search, "Filter tables…");
                 ui.add_space(2.0);
 
-                // Filter upload row
                 let filter_changed = filter_upload_row(ui, &mut self.filter_list);
                 if filter_changed {
-                    // Clear selection that no longer matches the new filter
                     if let Some(list) = &self.filter_list {
                         let allowed: HashSet<&str> =
                             list.iter().map(|s| s.as_str()).collect();
@@ -179,10 +183,15 @@ impl CreateScriptState {
 
                 let items: Vec<(String, String)> =
                     tables.iter().map(|t| (t.clone(), String::new())).collect();
-                // filter_snap is already dropped (not held), safe to re-borrow filter_list
                 let filter_for_list = self.filter_list.as_deref();
-                let toggles =
-                    checkbox_list(ui, "script_table_select", &items, &self.selected, &self.search, filter_for_list);
+                let toggles = checkbox_list(
+                    ui,
+                    "schema_gen_table_select",
+                    &items,
+                    &self.selected,
+                    &self.search,
+                    filter_for_list,
+                );
                 for (name, checked) in toggles {
                     if checked {
                         self.selected.insert(name);
@@ -194,36 +203,109 @@ impl CreateScriptState {
 
             ui.separator();
 
-            // ── Right: output ─────────────────────────────────────────────
+            // ── Right: format selection + output ──────────────────────────
             ui.vertical(|ui| {
-                section_header(ui, "Generated DDL", 0, "");
+                section_header(ui, "Schema Generator", 0, "");
                 ui.add_space(3.0);
 
-                let can = !self.selected.is_empty();
-                let output_ref = self.output.clone();
-                let acted = output_actions(
-                    ui,
-                    "⚙  Generate Script",
-                    can,
-                    self.generating,
-                    &output_ref,
-                    Some("create_tables.sql"),
-                );
-                if acted {
-                    self.start_generate(rt, pool, schema);
+                // Format picker + Generate button
+                ui.horizontal(|ui| {
+                    ui.colored_label(style::COLOR_MUTED, "Target format:");
+                    egui::ComboBox::from_id_salt("schema_format_combo")
+                        .selected_text(self.format.label())
+                        .width(170.0)
+                        .show_ui(ui, |ui| {
+                            for &fmt in SchemaFormat::ALL {
+                                ui.selectable_value(&mut self.format, fmt, fmt.label());
+                            }
+                        });
+
+                    ui.add_space(8.0);
+
+                    let can = !self.selected.is_empty();
+                    let btn_text = if self.generating {
+                        "⏳  Generating…"
+                    } else {
+                        "⚙  Generate Schema"
+                    };
+                    if ui
+                        .add_enabled(
+                            can && !self.generating,
+                            egui::Button::new(egui::RichText::new(btn_text).size(13.0))
+                                .min_size(egui::vec2(140.0, 28.0)),
+                        )
+                        .clicked()
+                    {
+                        self.start_generate(rt, pool, schema);
+                    }
+                });
+
+                // Format description
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    let desc = match self.format {
+                        SchemaFormat::Postgres   => "Native PostgreSQL DDL with all constraints",
+                        SchemaFormat::Oracle     => "Oracle-compatible types (NUMBER, CLOB, RAW…)",
+                        SchemaFormat::MySQL      => "MySQL/MariaDB syntax (backtick quoting)",
+                        SchemaFormat::SQLServer  => "T-SQL types (NVARCHAR, UNIQUEIDENTIFIER…)",
+                        SchemaFormat::Databricks => "Delta Lake CREATE TABLE (no FK/CHECK)",
+                        SchemaFormat::SQLite     => "SQLite affinity types (INTEGER, REAL, TEXT…)",
+                        SchemaFormat::Snowflake  => "Snowflake types (VARIANT, TIMESTAMP_TZ…)",
+                    };
+                    ui.colored_label(style::COLOR_MUTED, desc);
+                });
+                ui.add_space(2.0);
+
+                // Copy / Save row
+                if !self.output.is_empty() && !self.generating {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new("📋 Copy")
+                                    .min_size(egui::vec2(70.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(self.output.clone());
+                        }
+                        let filename = format!(
+                            "schema_{}.{}",
+                            self.format.label().to_lowercase().replace(' ', "_"),
+                            self.format.file_ext()
+                        );
+                        if ui
+                            .add(
+                                egui::Button::new("💾 Save")
+                                    .min_size(egui::vec2(70.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_file_name(&filename)
+                                .save_file()
+                            {
+                                let _ = std::fs::write(path, &self.output);
+                            }
+                        }
+                        ui.separator();
+                        ui.colored_label(
+                            style::COLOR_ACCENT,
+                            format!("{} tables  ·  {}", self.selected.len(), self.format.label()),
+                        );
+                    });
+                    ui.add_space(2.0);
                 }
 
-                ui.add_space(4.0);
-
+                // Output area
                 if self.generating {
-                    loading_ui(ui, "Generating DDL");
+                    loading_ui(ui, "Generating schema");
                 } else {
                     let output = self.output.clone();
                     output_panel(
                         ui,
-                        "script_output",
+                        "schema_gen_output",
                         &output,
-                        "Select tables on the left, then click ⚙  Generate Script.",
+                        "Select tables on the left, choose a format, then click ⚙  Generate Schema.",
                     );
                 }
             });

@@ -18,8 +18,10 @@ fn shared_none<T>() -> Shared<T> {
 enum Tab {
     Tables,
     CreateScript,
+    FakeData,
     Views,
     Query,
+    Search,
 }
 
 pub struct PgTablesApp {
@@ -48,8 +50,10 @@ pub struct PgTablesApp {
     // tab states (each tab owns its own data)
     tables_state: tabs::tables::TablesState,
     create_script_state: tabs::create_script::CreateScriptState,
+    fake_data_state: tabs::fake_data::FakeDataState,
     views_state: tabs::views::ViewsState,
     query_state: tabs::query::QueryState,
+    search_state: tabs::search::SearchState,
 }
 
 // ── Construction & session ───────────────────────────────────────────────────
@@ -75,8 +79,10 @@ impl PgTablesApp {
             tab: Tab::Tables,
             tables_state: Default::default(),
             create_script_state: Default::default(),
+            fake_data_state: Default::default(),
             views_state: Default::default(),
             query_state: Default::default(),
+            search_state: Default::default(),
         }
     }
 
@@ -169,8 +175,10 @@ impl PgTablesApp {
             self.tables_state.load_tables(&self.rt, pool, &schema);
             self.views_state.load_views(&self.rt, pool, &schema);
             self.create_script_state.clear();
+            self.fake_data_state.clear();
             self.query_state.result = None;
             self.query_state.error = None;
+            self.search_state.clear();
             self.save_session();
         }
     }
@@ -180,8 +188,10 @@ impl PgTablesApp {
         self.schemas.clear();
         self.tables_state.clear();
         self.create_script_state.clear();
+        self.fake_data_state.clear();
         self.views_state.clear();
         self.query_state.clear();
+        self.search_state.clear();
         self.conn_error = None;
     }
 }
@@ -382,9 +392,11 @@ impl PgTablesApp {
                 ui.horizontal(|ui| {
                     let tabs = [
                         (Tab::Tables,       "📋  Tables"),
-                        (Tab::CreateScript, "📝  Create Script"),
+                        (Tab::CreateScript, "📝  Schema Generator"),
+                        (Tab::FakeData,     "🎲  Fake Data"),
                         (Tab::Views,        "👁  Views"),
                         (Tab::Query,        "⚡  SQL Query"),
+                        (Tab::Search,       "🔎  Advanced Search"),
                     ];
                     for (tab, label) in tabs {
                         ui.selectable_value(&mut self.tab, tab, label);
@@ -444,11 +456,19 @@ impl PgTablesApp {
                     self.create_script_state
                         .draw(ui, &tables, &self.rt, &pool, &schema);
                 }
+                Tab::FakeData => {
+                    let tables = self.tables_state.tables.clone();
+                    self.fake_data_state
+                        .draw(ui, &tables, &self.rt, &pool, &schema);
+                }
                 Tab::Views => {
                     self.views_state.draw(ui, &self.rt, &pool, &schema);
                 }
                 Tab::Query => {
                     self.query_state.draw(ui, &self.rt, &pool);
+                }
+                Tab::Search => {
+                    self.search_state.draw(ui, &self.rt, &pool, &schema);
                 }
             }
         });

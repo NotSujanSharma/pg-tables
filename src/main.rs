@@ -1,6 +1,8 @@
 mod app;
 mod components;
 mod db;
+mod faker;
+mod schema_format;
 mod session;
 mod style;
 mod tabs;
