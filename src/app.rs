@@ -1,5 +1,6 @@
 //! Main application state and routing — delegates to tab modules.
 
+use crate::components;
 use crate::db;
 use crate::session::Session;
 use crate::style;
@@ -53,7 +54,8 @@ pub struct PgTablesApp {
 
 // ── Construction & session ───────────────────────────────────────────────────
 impl PgTablesApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        style::setup_visuals(&cc.egui_ctx);
         let session = Session::load().unwrap_or_default();
         let has_session = Session::load().is_some();
 
@@ -163,6 +165,7 @@ impl PgTablesApp {
     fn reload_data(&mut self) {
         if let Some(pool) = &self.pool {
             let schema = self.selected_schema.clone();
+            // Both load_tables and load_views are now non-blocking (spawn async)
             self.tables_state.load_tables(&self.rt, pool, &schema);
             self.views_state.load_views(&self.rt, pool, &schema);
             self.create_script_state.clear();
@@ -188,66 +191,98 @@ impl PgTablesApp {
     fn draw_login(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(80.0);
+                ui.add_space(70.0);
 
-                ui.heading(egui::RichText::new("🐘 PG Tables").size(28.0));
+                ui.add(egui::Label::new(
+                    egui::RichText::new("🐘  PG Tables")
+                        .size(30.0)
+                        .strong()
+                        .color(style::COLOR_ACCENT),
+                ));
                 ui.add_space(4.0);
-                ui.colored_label(style::COLOR_MUTED, "Connect to your PostgreSQL database");
-                ui.add_space(30.0);
+                ui.colored_label(
+                    style::COLOR_MUTED,
+                    "Connect to your PostgreSQL database",
+                );
+                ui.add_space(28.0);
 
                 ui.allocate_ui(egui::vec2(style::LOGIN_PANEL_WIDTH, 0.0), |ui| {
                     egui::Frame::NONE
-                        .inner_margin(20.0)
-                        .corner_radius(8.0)
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
+                        .inner_margin(egui::Margin::same(24))
+                        .corner_radius(10.0)
+                        .fill(egui::Color32::from_rgb(32, 32, 40))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgb(55, 58, 75),
+                        ))
                         .show(ui, |ui| {
                             egui::Grid::new("login_grid")
                                 .num_columns(2)
-                                .spacing([12.0, 10.0])
+                                .spacing([14.0, 10.0])
                                 .show(ui, |ui| {
                                     ui.label("Host:");
-                                    ui.add(egui::TextEdit::singleline(&mut self.host)
-                                        .desired_width(style::LOGIN_FIELD_WIDTH));
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.host)
+                                            .desired_width(style::LOGIN_FIELD_WIDTH)
+                                            .hint_text("localhost"),
+                                    );
                                     ui.end_row();
 
                                     ui.label("Port:");
-                                    ui.add(egui::TextEdit::singleline(&mut self.port)
-                                        .desired_width(style::LOGIN_FIELD_WIDTH));
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.port)
+                                            .desired_width(style::LOGIN_FIELD_WIDTH)
+                                            .hint_text("5432"),
+                                    );
                                     ui.end_row();
 
                                     ui.label("User:");
-                                    ui.add(egui::TextEdit::singleline(&mut self.user)
-                                        .desired_width(style::LOGIN_FIELD_WIDTH));
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.user)
+                                            .desired_width(style::LOGIN_FIELD_WIDTH),
+                                    );
                                     ui.end_row();
 
                                     ui.label("Password:");
-                                    ui.add(egui::TextEdit::singleline(&mut self.password)
-                                        .password(true)
-                                        .desired_width(style::LOGIN_FIELD_WIDTH));
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.password)
+                                            .password(true)
+                                            .desired_width(style::LOGIN_FIELD_WIDTH),
+                                    );
                                     ui.end_row();
 
                                     ui.label("Database:");
-                                    ui.add(egui::TextEdit::singleline(&mut self.dbname)
-                                        .desired_width(style::LOGIN_FIELD_WIDTH));
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.dbname)
+                                            .desired_width(style::LOGIN_FIELD_WIDTH),
+                                    );
                                     ui.end_row();
                                 });
 
-                            ui.add_space(10.0);
-                            ui.checkbox(&mut self.remember_session, "Remember credentials");
                             ui.add_space(12.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+
+                            ui.horizontal(|ui| {
+                                ui.checkbox(
+                                    &mut self.remember_session,
+                                    "Remember credentials",
+                                );
+                            });
+                            ui.add_space(14.0);
 
                             ui.vertical_centered(|ui| {
+                                let label = if self.connecting {
+                                    "⏳  Connecting…"
+                                } else {
+                                    "🔌  Connect"
+                                };
                                 let btn = ui.add_enabled(
                                     !self.connecting,
                                     egui::Button::new(
-                                        egui::RichText::new(if self.connecting {
-                                            "⏳ Connecting..."
-                                        } else {
-                                            "🔌 Connect"
-                                        })
-                                        .size(15.0),
+                                        egui::RichText::new(label).size(14.5),
                                     )
-                                    .min_size(egui::vec2(140.0, 34.0)),
+                                    .min_size(egui::vec2(160.0, 36.0)),
                                 );
                                 if btn.clicked() {
                                     self.do_connect();
@@ -256,87 +291,144 @@ impl PgTablesApp {
                         });
                 });
 
-                if let Some(err) = &self.conn_error {
-                    ui.add_space(14.0);
-                    ui.colored_label(style::COLOR_ERROR, format!("⚠ {err}"));
+                if let Some(err) = &self.conn_error.clone() {
+                    ui.add_space(16.0);
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .corner_radius(6.0)
+                        .fill(egui::Color32::from_rgb(60, 24, 24))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgb(140, 50, 50),
+                        ))
+                        .show(ui, |ui| {
+                            ui.colored_label(
+                                style::COLOR_ERROR,
+                                format!("⚠  {err}"),
+                            );
+                        });
                 }
             });
         });
     }
 
     fn draw_main(&mut self, ctx: &egui::Context) {
-        // Top bar
+        // ── Top bar ───────────────────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar")
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .inner_margin(egui::Margin::symmetric(10, 7)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("🐘 PG Tables").size(18.0).strong());
+                    ui.add(egui::Label::new(
+                        egui::RichText::new("🐘  PG Tables")
+                            .size(17.0)
+                            .strong()
+                            .color(style::COLOR_ACCENT),
+                    ));
                     ui.separator();
 
-                    ui.label("Schema:");
+                    ui.colored_label(style::COLOR_MUTED, "Schema:");
                     let prev_schema = self.selected_schema.clone();
                     egui::ComboBox::from_id_salt("schema_selector")
                         .selected_text(&self.selected_schema)
-                        .width(140.0)
+                        .width(150.0)
                         .show_ui(ui, |ui| {
                             for s in &self.schemas {
-                                ui.selectable_value(&mut self.selected_schema, s.clone(), s);
+                                ui.selectable_value(
+                                    &mut self.selected_schema,
+                                    s.clone(),
+                                    s,
+                                );
                             }
                         });
                     if self.selected_schema != prev_schema {
                         self.reload_data();
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("⏏ Disconnect").clicked() {
-                            self.disconnect();
-                        }
-                        ui.separator();
-                        ui.colored_label(
-                            style::COLOR_MUTED,
-                            format!("{}@{}:{}/{}", self.user, self.host, self.port, self.dbname),
-                        );
-                    });
-                });
-            });
-
-        // Tab bar
-        egui::TopBottomPanel::top("tab_bar")
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::symmetric(8, 4)))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.tab, Tab::Tables, "📋 Tables");
-                    ui.add_space(4.0);
-                    ui.selectable_value(&mut self.tab, Tab::CreateScript, "📝 Create Script");
-                    ui.add_space(4.0);
-                    ui.selectable_value(&mut self.tab, Tab::Views, "👁 Views");
-                    ui.add_space(4.0);
-                    ui.selectable_value(&mut self.tab, Tab::Query, "⚡ SQL Query");
-                });
-            });
-
-        // Status bar
-        egui::TopBottomPanel::bottom("status_bar")
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(4.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.colored_label(
-                        style::COLOR_MUTED,
-                        format!(
-                            "Schema: {} │ {} tables │ {} views",
-                            self.selected_schema,
-                            self.tables_state.tables.len(),
-                            self.views_state.views.len(),
-                        ),
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new("⏏  Disconnect")
+                                        .min_size(egui::vec2(0.0, 26.0)),
+                                )
+                                .clicked()
+                            {
+                                self.disconnect();
+                            }
+                            ui.separator();
+                            ui.colored_label(
+                                style::COLOR_MUTED,
+                                format!(
+                                    "{}@{}:{}/{}",
+                                    self.user, self.host, self.port, self.dbname
+                                ),
+                            );
+                        },
                     );
                 });
             });
 
-        // Content — delegate to tab modules
+        // ── Tab bar ───────────────────────────────────────────────────────
+        egui::TopBottomPanel::top("tab_bar")
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let tabs = [
+                        (Tab::Tables,       "📋  Tables"),
+                        (Tab::CreateScript, "📝  Create Script"),
+                        (Tab::Views,        "👁  Views"),
+                        (Tab::Query,        "⚡  SQL Query"),
+                    ];
+                    for (tab, label) in tabs {
+                        ui.selectable_value(&mut self.tab, tab, label);
+                        ui.add_space(2.0);
+                    }
+                });
+            });
+
+        // ── Status bar ────────────────────────────────────────────────────
+        egui::TopBottomPanel::bottom("status_bar")
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let tables_str = if self.tables_state.loading_tables {
+                        "loading…".to_string()
+                    } else {
+                        self.tables_state.tables.len().to_string()
+                    };
+                    let views_str = if self.views_state.loading_views {
+                        "loading…".to_string()
+                    } else {
+                        self.views_state.views.len().to_string()
+                    };
+                    ui.colored_label(
+                        style::COLOR_MUTED,
+                        format!(
+                            "Schema: {}  ·  {} tables  ·  {} views",
+                            self.selected_schema, tables_str, views_str,
+                        ),
+                    );
+                    // Repaint while loading so status updates
+                    if self.tables_state.loading_tables || self.views_state.loading_views {
+                        ctx.request_repaint();
+                    }
+                });
+            });
+
+        // ── Content panel ─────────────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = style::SPACING;
 
-            // We need pool reference for tabs
             let pool = match &self.pool {
                 Some(p) => p.clone(),
                 None => return,
@@ -349,7 +441,8 @@ impl PgTablesApp {
                 }
                 Tab::CreateScript => {
                     let tables = self.tables_state.tables.clone();
-                    self.create_script_state.draw(ui, &tables, &self.rt, &pool, &schema);
+                    self.create_script_state
+                        .draw(ui, &tables, &self.rt, &pool, &schema);
                 }
                 Tab::Views => {
                     self.views_state.draw(ui, &self.rt, &pool, &schema);
@@ -359,6 +452,11 @@ impl PgTablesApp {
                 }
             }
         });
+
+        // ── Global loading modal (shown when tables + views both loading) ─
+        if self.tables_state.loading_tables && self.views_state.loading_views {
+            components::loading_modal(ctx, "Loading schema data");
+        }
     }
 }
 

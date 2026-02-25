@@ -1,10 +1,13 @@
 //! Tables tab — browsable table list with column detail panel.
 
-use crate::components::{search_bar, section_header};
+use crate::components::{loading_ui, search_bar, section_header};
 use crate::db;
 use crate::style;
 use eframe::egui;
 use sqlx::PgPool;
+use std::sync::{Arc, Mutex};
+
+type Pending<T> = Arc<Mutex<Option<T>>>;
 
 /// State for the Tables tab.
 pub struct TablesState {
@@ -12,6 +15,12 @@ pub struct TablesState {
     pub search: String,
     pub selected_table: Option<String>,
     pub columns: Vec<db::ColumnInfo>,
+
+    // async loading
+    pub loading_tables: bool,
+    pub loading_columns: bool,
+    pending_tables: Option<Pending<Vec<String>>>,
+    pending_columns: Option<Pending<Vec<db::ColumnInfo>>>,
 }
 
 impl Default for TablesState {
@@ -21,6 +30,10 @@ impl Default for TablesState {
             search: String::new(),
             selected_table: None,
             columns: vec![],
+            loading_tables: false,
+            loading_columns: false,
+            pending_tables: None,
+            pending_columns: None,
         }
     }
 }
@@ -31,74 +44,168 @@ impl TablesState {
         self.search.clear();
         self.selected_table = None;
         self.columns.clear();
+        self.loading_tables = false;
+        self.loading_columns = false;
+        self.pending_tables = None;
+        self.pending_columns = None;
     }
 
+    /// Non-blocking: spawn table load in background.
     pub fn load_tables(&mut self, rt: &tokio::runtime::Runtime, pool: &PgPool, schema: &str) {
-        self.tables = rt
-            .block_on(db::list_tables(pool, schema))
-            .unwrap_or_default();
+        let result: Pending<Vec<String>> = Arc::new(Mutex::new(None));
+        self.pending_tables = Some(result.clone());
+        self.loading_tables = true;
+        self.tables.clear();
         self.selected_table = None;
         self.columns.clear();
         self.search.clear();
+
+        let pool = pool.clone();
+        let schema = schema.to_string();
+        rt.spawn(async move {
+            let tables = db::list_tables(&pool, &schema).await.unwrap_or_default();
+            *result.lock().unwrap() = Some(tables);
+        });
     }
 
-    pub fn load_columns(&mut self, rt: &tokio::runtime::Runtime, pool: &PgPool, schema: &str, table: &str) {
-        self.columns = rt
-            .block_on(db::list_columns(pool, schema, table))
-            .unwrap_or_default();
+    /// Non-blocking: spawn column load in background.
+    fn start_load_columns(
+        &mut self,
+        rt: &tokio::runtime::Runtime,
+        pool: &PgPool,
+        schema: &str,
+        table: &str,
+    ) {
+        let result: Pending<Vec<db::ColumnInfo>> = Arc::new(Mutex::new(None));
+        self.pending_columns = Some(result.clone());
+        self.loading_columns = true;
         self.selected_table = Some(table.to_string());
+        self.columns.clear();
+
+        let pool = pool.clone();
+        let schema = schema.to_string();
+        let table = table.to_string();
+        rt.spawn(async move {
+            let cols = db::list_columns(&pool, &schema, &table)
+                .await
+                .unwrap_or_default();
+            *result.lock().unwrap() = Some(cols);
+        });
     }
 
-    pub fn draw(&mut self, ui: &mut egui::Ui, rt: &tokio::runtime::Runtime, pool: &PgPool, schema: &str) {
-        let available = ui.available_size();
-        let left_width = (available.x * style::PANEL_LEFT_RATIO).max(180.0);
+    /// Poll pending async results — call at the top of `draw`.
+    fn poll(&mut self, ctx: &egui::Context) {
+        if self.loading_tables {
+            ctx.request_repaint();
+            let done = {
+                let r = self.pending_tables.as_ref()
+                    .and_then(|p| p.try_lock().ok())
+                    .and_then(|mut g| g.take());
+                r
+            };
+            if let Some(tables) = done {
+                self.tables = tables;
+                self.loading_tables = false;
+                self.pending_tables = None;
+            }
+        }
+        if self.loading_columns {
+            ctx.request_repaint();
+            let done = {
+                let r = self.pending_columns.as_ref()
+                    .and_then(|p| p.try_lock().ok())
+                    .and_then(|mut g| g.take());
+                r
+            };
+            if let Some(cols) = done {
+                self.columns = cols;
+                self.loading_columns = false;
+                self.pending_columns = None;
+            }
+        }
+    }
 
-        // We need to collect the clicked table name outside the borrow
+    pub fn draw(
+        &mut self,
+        ui: &mut egui::Ui,
+        rt: &tokio::runtime::Runtime,
+        pool: &PgPool,
+        schema: &str,
+    ) {
+        self.poll(ui.ctx());
+
+        let available = ui.available_size();
+        let left_width = (available.x * style::PANEL_LEFT_RATIO).max(200.0);
         let mut clicked_table: Option<String> = None;
 
         ui.horizontal(|ui| {
-            // Left: table list
+            // ── Left: table list ──────────────────────────────────────────
             ui.vertical(|ui| {
                 ui.set_width(left_width);
                 ui.set_min_height(available.y);
 
                 section_header(ui, "Tables", self.tables.len(), "total");
-                ui.add_space(2.0);
-                search_bar(ui, &mut self.search, "Filter tables...");
+                ui.add_space(3.0);
+                search_bar(ui, &mut self.search, "Filter tables…");
                 ui.add_space(4.0);
 
-                let search_lower = self.search.to_lowercase();
-                let selected = self.selected_table.clone();
+                if self.loading_tables {
+                    loading_ui(ui, "Loading tables");
+                } else {
+                    let search_lower = self.search.to_lowercase();
+                    let selected = self.selected_table.clone();
 
-                egui::ScrollArea::vertical()
-                    .id_salt("tables_list_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let mut any = false;
-                        for name in &self.tables {
-                            if !search_lower.is_empty()
-                                && !name.to_lowercase().contains(&search_lower)
-                            {
-                                continue;
+                    egui::ScrollArea::vertical()
+                        .id_salt("tables_list_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let mut any = false;
+                            for name in &self.tables {
+                                if !search_lower.is_empty()
+                                    && !name.to_lowercase().contains(&search_lower)
+                                {
+                                    continue;
+                                }
+                                any = true;
+                                let is_selected = selected.as_deref() == Some(name.as_str());
+                                if ui
+                                    .add(egui::Button::selectable(is_selected, name))
+                                    .clicked()
+                                    && !is_selected
+                                {
+                                    clicked_table = Some(name.clone());
+                                }
                             }
-                            any = true;
-                            let is_selected = selected.as_deref() == Some(name.as_str());
-                            if ui.selectable_label(is_selected, name).clicked() && !is_selected {
-                                clicked_table = Some(name.clone());
+                            if !any {
+                                ui.add_space(8.0);
+                                ui.centered_and_justified(|ui| {
+                                    ui.colored_label(style::COLOR_MUTED, "No tables match.");
+                                });
                             }
-                        }
-                        if !any {
-                            ui.colored_label(style::COLOR_MUTED, "No tables match.");
-                        }
-                    });
+                        });
+                }
             });
 
             ui.separator();
 
-            // Right: column details
+            // ── Right: column details ─────────────────────────────────────
             ui.vertical(|ui| {
-                if let Some(table_name) = &self.selected_table.clone() {
-                    section_header(ui, &format!("Columns: {table_name}"), self.columns.len(), "columns");
+                if self.loading_columns {
+                    let tname = self
+                        .selected_table
+                        .as_deref()
+                        .unwrap_or("table")
+                        .to_string();
+                    section_header(ui, &format!("Columns: {tname}"), 0, "");
+                    ui.add_space(4.0);
+                    loading_ui(ui, "Loading columns");
+                } else if let Some(table_name) = &self.selected_table.clone() {
+                    section_header(
+                        ui,
+                        &format!("Columns: {table_name}"),
+                        self.columns.len(),
+                        "columns",
+                    );
                     ui.add_space(4.0);
 
                     egui::ScrollArea::vertical()
@@ -110,7 +217,6 @@ impl TablesState {
                                 .spacing([16.0, 4.0])
                                 .striped(true)
                                 .show(ui, |ui| {
-                                    // Header
                                     ui.colored_label(style::COLOR_HEADER, "Column");
                                     ui.colored_label(style::COLOR_HEADER, "Type");
                                     ui.colored_label(style::COLOR_HEADER, "Nullable");
@@ -136,6 +242,7 @@ impl TablesState {
                                 });
                         });
                 } else {
+                    section_header(ui, "Columns", 0, "");
                     ui.centered_and_justified(|ui| {
                         ui.colored_label(style::COLOR_MUTED, "← Select a table to view its columns");
                     });
@@ -143,9 +250,9 @@ impl TablesState {
             });
         });
 
-        // Handle deferred click
         if let Some(name) = clicked_table {
-            self.load_columns(rt, pool, schema, &name);
+            self.start_load_columns(rt, pool, schema, &name);
         }
     }
 }
+
